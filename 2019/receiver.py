@@ -1,6 +1,9 @@
 # Written by S. Mevawala, modified by D. Gitzel
+#Zheng Liu
+#ECE303
 
 import logging
+
 import channelsimulator
 import utils
 import sys
@@ -40,90 +43,90 @@ class BogoReceiver(Receiver):
             except socket.timeout:
                 sys.exit()
 
-class myReceiver(BogoReceiver):
-    seg_rcv = bytearray()
-    
+class newReceiver(BogoReceiver):
+    rcvArray = bytearray([0,0,0,0])
+    # Back-up Ack message
+    backupAck = bytearray([0,0,0])
+    lastAckNum = -1 
+    resend = True
+    dupNum = 0
 
-    resend = True  #Boolean for telling if needs resend
-    dup = 0 #To handle duplicated pkts
-    
-    last_ack = -1 #etra place to hold the prev ack
-    backupAck = bytearray() #Preserve the whole bytearray in case of resend
-
-
+    # Constructor
     def __init__(self, timeout = 0.1):
-        super(myReceiver, self).__init__()  #inheritance
+        super(newReceiver, self).__init__()
         self.timeout = timeout
         self.simulator.rcvr_socket.settimeout(self.timeout)
 
-    def receive(self):  #override
-        # start the general process
+    def receive(self):
+        # Waiting for the coming data
         while True:
             try:
-                self.seg_rcv = self.simulator.u_receive()
-                # TImeout needs to be checked manually
+                self.rcvArray = self.simulator.u_receive()
+                # Checking timeout
                 if self.timeout > 0.1:
                     self.timeout -= 0.1
-                    self.dup = 0
+                    self.dupNum = 0
 
-                #Handle received segs
-                curr_seg = rcvrSegment()  #create data structure
-                good_pkt = curr_seg.validate(self.seg_rcv, self.last_ack)
+                # Send the ACK message
+                self.send()
 
-                #decide ack values
-                if good_pkt:
-                    self.last_ack = curr_seg.ack_num
-                if curr_seg.ack_num < 0:
-                    curr_seg.ack_num = 0
-
-                #send ack
-                curr_seg.checksum = curr_seg.checkSum()
-                seg_rcv = bytearray([curr_seg.checksum, curr_seg.ack_num])
-                backupAck = seg_rcv
-                self.simulator.u_send(seg_rcv)
-
-            # Timeout
+            # When Timeout, resend the back-up ACK  
             except socket.timeout:
                 self.resend = True
                 self.simulator.u_send(self.backupAck)
-                self.dup += 1
+                self.dupNum += 1
 
-                if self.dup >= 3:   #like fast retx
-                    self.dup = 0
+                if self.dupNum >= 3:
+                    self.dupNum = 0
                     self.timeout *= 2
                     self.simulator.rcvr_socket.settimeout(self.timeout)
-                    if self.timeout > 30:
-                        sys.exit()
+                    if self.timeout > 5:
+                        exit()
                         
+    def send(self):
+        # Inplement the Sending of the ACK messgae
+        AckSegment = rcvrSegment()
+        AckSuccess = AckSegment.ack(self.rcvArray, self.lastAckNum)
+        if AckSuccess:
+            self.lastAckNum = AckSegment.AckNum
+        if AckSegment.AckNum < 0:
+            AckSegment.AckNum = 0
+        AckSegment.checksum = AckSegment.checkSum()
+        rcvArray = bytearray([AckSegment.checksum, AckSegment.AckNum])
+        backupAck = rcvArray
+        self.simulator.u_send(rcvArray)
 
 class rcvrSegment(object):
-    def __init__(self, checksum = 0, seq = 0, ack_num = 0, data = []):
+    def __init__(self, checksum = 0, seqNum = 0, AckNum = 0, data = []):
         self.checksum = checksum
-        self.seq = seq
-        self.ack_num = ack_num
+        self.seqNum = seqNum
+        self.AckNum = AckNum
         self.data = data
          
-    # Just onee byte
+    # The checksum will be the ack number itself since this is the receiver side
     def checkSum(self):        
-        return self.ack_num
+        return self.AckNum
         
 
-    # Traditional check method for one's comp chksum, found on wikipedia
+    # Check the ack
     def checkACK(self,data):
+        # Inverting the bits
         val =~ data[0]   
         for i in xrange(1,len(data)):
+            # XORing the data
             val ^= data[i]
         if val ==- 1:
+            # Return true if the result is 11111...    
             return True 
         else:
             return False
     
-    # Validate the packet
-    def validate(self, data, last_ack):
+    # Check the ACK
+    def ack(self, data, lastAckNum):
         check = self.checkACK(data)
         if check:
-            self.ack_num = (data[2] + len(data[3:])) % 256
-            if data[2] == last_ack or last_ack == -1:
+            self.AckNum = (data[2] + len(data[3:])) % 256
+            if data[2] == lastAckNum or lastAckNum == -1:
                 sys.stdout.write("{}".format(data[3:]))
                 sys.stdout.flush()
                 return True
@@ -133,5 +136,6 @@ class rcvrSegment(object):
         return False
 
 if __name__ == "__main__":
-    rcvr = myReceiver()
+    # test out BogoReceiver
+    rcvr = newReceiver()
     rcvr.receive()
